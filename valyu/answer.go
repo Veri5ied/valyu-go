@@ -156,10 +156,8 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 	var searchResults []SearchResult
 	var finalResponse AnswerResponse
 
-	// Read the full body first so we can support both streamed SSE and plain JSON responses.
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
-	// If the response looks like SSE (lines starting with "data: "), parse line-by-line.
 	if bytes.HasPrefix(bytes.TrimLeft(bodyBytes, "\n\r \t"), []byte("data: ")) {
 		scanner := bufio.NewScanner(bytes.NewReader(bodyBytes))
 		for scanner.Scan() {
@@ -249,7 +247,7 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 			}
 		}
 	} else {
-		// Fallback: try to parse the entire body as a single JSON object.
+
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &parsed); err == nil {
 			if results, ok := parsed["search_results"]; ok {
