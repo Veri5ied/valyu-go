@@ -152,22 +152,21 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
 	if resp.StatusCode >= 400 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &parsed); err == nil {
 			if errMsg, ok := parsed["error"].(string); ok && errMsg != "" {
 				return &AnswerResponse{Success: false, Error: errMsg}, nil
 			}
 		}
-		return &AnswerResponse{Success: false, Error: fmt.Sprintf("request failed with status %d", resp.StatusCode)}, nil
+		return &AnswerResponse{Success: false, Error: fmt.Sprintf("Request failed with status %d", resp.StatusCode)}, nil
 	}
 
 	var fullContent strings.Builder
 	var searchResults []SearchResult
 	var finalResponse AnswerResponse
-
-	bodyBytes, _ := io.ReadAll(resp.Body)
 
 	if bytes.HasPrefix(bytes.TrimLeft(bodyBytes, "\n\r \t"), []byte("data: ")) {
 		scanner := bufio.NewScanner(bytes.NewReader(bodyBytes))
@@ -258,7 +257,6 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 			}
 		}
 	} else {
-
 		var parsed map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &parsed); err == nil {
 			if results, ok := parsed["search_results"]; ok {
@@ -287,11 +285,19 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 				if successBool, ok := success.(bool); ok {
 					finalResponse.Success = successBool
 				}
+			} else if _, hasError := parsed["error"]; !hasError {
+				finalResponse.Success = true
 			}
 
 			if errMsg, ok := parsed["error"].(string); ok {
 				finalResponse.Error = errMsg
+				finalResponse.Success = false
 			}
+		} else {
+			return &AnswerResponse{
+				Success: false,
+				Error:   "Invalid JSON response from server",
+			}, nil
 		}
 	}
 
@@ -304,12 +310,20 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 		finalResponse.SearchResults = searchResults
 	}
 
-	if finalResponse.Contents != nil || fullContent.Len() > 0 {
+	if fullContent.Len() > 0 && finalResponse.Contents == nil {
+		finalResponse.Contents = fullContent.String()
+	}
+
+	if (fullContent.Len() > 0 || finalResponse.Contents != nil || len(finalResponse.SearchResults) > 0) && finalResponse.Error == "" {
 		finalResponse.Success = true
 	}
 
 	if !finalResponse.Success && finalResponse.Error == "" {
-		finalResponse.Error = "Unknown error occurred"
+		snippet := string(bodyBytes)
+		if len(snippet) > 100 {
+			snippet = snippet[:100] + "..."
+		}
+		finalResponse.Error = fmt.Sprintf("Unknown error occurred (Raw response: %s)", snippet)
 	}
 
 	return &finalResponse, nil
@@ -402,6 +416,14 @@ func (c *Client) AnswerStream(ctx context.Context, query string, opts *AnswerOpt
 				continue
 			}
 
+			if errMsg, ok := parsed["error"].(string); ok && errMsg != "" {
+				ch <- AnswerStreamChunk{
+					Type:  "error",
+					Error: errMsg,
+				}
+				return
+			}
+
 			if results, ok := parsed["search_results"]; ok {
 				if _, hasSuccess := parsed["success"]; !hasSuccess {
 					if resultsData, err := json.Marshal(results); err == nil {
@@ -440,6 +462,20 @@ func (c *Client) AnswerStream(ctx context.Context, query string, opts *AnswerOpt
 
 			if success, ok := parsed["success"]; ok {
 				chunk := AnswerStreamChunk{Type: "metadata"}
+
+				if successBool, ok := success.(bool); ok {
+					if !successBool {
+						chunk.Type = "error"
+						if errMsg, ok := parsed["error"].(string); ok {
+							chunk.Error = errMsg
+						} else {
+							chunk.Error = "Unknown stream error (success=false)"
+						}
+						ch <- chunk
+						return
+					}
+				}
+
 				if txID, ok := parsed["tx_id"].(string); ok {
 					chunk.TxID = txID
 				}
@@ -476,13 +512,6 @@ func (c *Client) AnswerStream(ctx context.Context, query string, opts *AnswerOpt
 						var searchResults []SearchResult
 						json.Unmarshal(srData, &searchResults)
 						chunk.SearchResults = searchResults
-					}
-				}
-
-				if successBool, ok := success.(bool); ok && !successBool {
-					chunk.Type = "error"
-					if errMsg, ok := parsed["error"].(string); ok {
-						chunk.Error = errMsg
 					}
 				}
 

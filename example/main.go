@@ -2,50 +2,104 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/Veri5ied/valyu-go/valyu"
 )
 
+func pretty(v interface{}) string {
+	if v == nil {
+		return "<nil>"
+	}
+	b, _ := json.MarshalIndent(v, "", "  ")
+	return string(b)
+}
+
 func main() {
+	if os.Getenv("VALYU_API_KEY") == "" {
+		log.Fatal("set VALYU_API_KEY env var")
+	}
+
 	client, err := valyu.NewClient("")
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
 
+	// Search
 	fmt.Println("=== Search ===")
-	searchResp, _ := client.Search(ctx, "What is machine learning?", nil)
-	if searchResp.Success {
-		fmt.Printf("Found %d results\n", len(searchResp.Results))
+	sr, err := client.Search(ctx, "What is retrieval-augmented generation?", &valyu.SearchOptions{MaxNumResults: 3})
+	if err != nil {
+		fmt.Println("Search error:", err)
+	} else if !sr.Success {
+		fmt.Println("Search API error:", sr.Error)
+	} else {
+		for i, r := range sr.Results {
+			fmt.Printf("%d) %s — %s\n", i+1, r.Title, r.URL)
+		}
 	}
 
-	fmt.Println("\n=== Contents ===")
-	contentsResp, _ := client.Contents(ctx, []string{"https://docs.valyu.ai"}, nil)
-	if contentsResp.Success {
-		fmt.Printf("Processed %d URLs\n", contentsResp.URLsProcessed)
-	}
-
+	// Answer (non-stream)
 	fmt.Println("\n=== Answer ===")
-	answerResp, _ := client.Answer(ctx, "What is RAG?", nil)
-	if answerResp.Success {
-		fmt.Printf("Answer received with %d sources\n", len(answerResp.SearchResults))
+	ans, err := client.Answer(ctx, "Explain RAG in AI, briefly.", nil)
+	if err != nil {
+		fmt.Println("Answer error:", err)
+	} else if !ans.Success {
+		fmt.Println("Answer API error:", ans.Error)
+	} else {
+		fmt.Println("Answer contents:", pretty(ans.Contents))
+		fmt.Printf("Found %d sources\n", len(ans.SearchResults))
 	}
 
-	fmt.Println("\n=== DeepResearch ===")
-	task, _ := client.DeepResearch.Create(ctx, &valyu.DeepResearchCreateOptions{
-		Query: "Latest AI developments",
-		Mode:  valyu.DeepResearchModeFast,
+	// AnswerStream (SSE)
+	fmt.Println("=== AnswerStream ===")
+	streamCh, err := client.AnswerStream(ctx, "What is RAG in AI?", &valyu.AnswerOptions{
+		SearchType: valyu.SearchTypeAll,
 	})
-	if task.Success {
-		fmt.Printf("Task created: %s\n", task.DeepResearchID)
+	if err != nil {
+		fmt.Printf("AnswerStream error: %v\n", err)
+	} else {
+		var fullContent strings.Builder
+		var streamResults []valyu.SearchResult
+
+		for chunk := range streamCh {
+			switch chunk.Type {
+			case "error":
+				fmt.Printf("Stream error: %s\n", chunk.Error)
+			case "search_results":
+				streamResults = append(streamResults, chunk.SearchResults...)
+				fmt.Printf("Got %d search results\n", len(chunk.SearchResults))
+			case "content":
+				fullContent.WriteString(chunk.Content)
+				if chunk.Content != "" {
+					fmt.Print(chunk.Content)
+				}
+			case "metadata":
+				fmt.Printf("\nStream metadata - TxID: %s\n", chunk.TxID)
+			case "done":
+				fmt.Println("\n[Stream completed]")
+			}
+		}
+
+		fmt.Printf("\nFinal streamed content (%d chars)\n", fullContent.Len())
+		fmt.Printf("Found %d sources via stream\n", len(streamResults))
 	}
 
+	// Datasources
 	fmt.Println("\n=== Datasources ===")
-	sources, _ := client.Datasources.List(ctx, nil)
-	if sources.Success {
-		fmt.Printf("Available: %d datasources\n", len(sources.Datasources))
+	ds, err := client.Datasources.List(ctx, nil)
+	if err != nil {
+		fmt.Println("Datasources error:", err)
+	} else if !ds.Success {
+		fmt.Println("Datasources API error:", ds.Error)
+	} else {
+		fmt.Printf("Available datasources: %d\n", len(ds.Datasources))
 	}
 }
