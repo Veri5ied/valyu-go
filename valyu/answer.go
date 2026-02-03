@@ -2,9 +2,11 @@ package valyu
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -154,90 +156,132 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 	var searchResults []SearchResult
 	var finalResponse AnswerResponse
 
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
+	// Read the full body first so we can support both streamed SSE and plain JSON responses.
+	bodyBytes, _ := io.ReadAll(resp.Body)
 
-		dataStr := strings.TrimPrefix(line, "data: ")
-		if dataStr == "[DONE]" {
-			continue
-		}
+	// If the response looks like SSE (lines starting with "data: "), parse line-by-line.
+	if bytes.HasPrefix(bytes.TrimLeft(bodyBytes, "\n\r \t"), []byte("data: ")) {
+		scanner := bufio.NewScanner(bytes.NewReader(bodyBytes))
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
 
+			dataStr := strings.TrimPrefix(line, "data: ")
+			if dataStr == "[DONE]" {
+				continue
+			}
+
+			var parsed map[string]interface{}
+			if err := json.Unmarshal([]byte(dataStr), &parsed); err != nil {
+				continue
+			}
+
+			if results, ok := parsed["search_results"]; ok {
+				if _, hasSuccess := parsed["success"]; !hasSuccess {
+					if resultsData, err := json.Marshal(results); err == nil {
+						var sr []SearchResult
+						if json.Unmarshal(resultsData, &sr) == nil {
+							searchResults = append(searchResults, sr...)
+						}
+					}
+				}
+			}
+
+			if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
+				if choice, ok := choices[0].(map[string]interface{}); ok {
+					if delta, ok := choice["delta"].(map[string]interface{}); ok {
+						if content, ok := delta["content"].(string); ok {
+							fullContent.WriteString(content)
+						}
+					}
+				}
+			}
+
+			if success, ok := parsed["success"]; ok {
+				if successBool, ok := success.(bool); ok && successBool {
+					finalResponse.Success = true
+					if txID, ok := parsed["tx_id"].(string); ok {
+						finalResponse.TxID = txID
+					}
+					if originalQuery, ok := parsed["original_query"].(string); ok {
+						finalResponse.OriginalQuery = originalQuery
+					}
+					if dataType, ok := parsed["data_type"].(string); ok {
+						finalResponse.DataType = dataType
+					}
+					if contents, ok := parsed["contents"]; ok {
+						finalResponse.Contents = contents
+					}
+
+					if sm, ok := parsed["search_metadata"].(map[string]interface{}); ok {
+						if smData, err := json.Marshal(sm); err == nil {
+							json.Unmarshal(smData, &finalResponse.SearchMetadata)
+						}
+					}
+
+					if au, ok := parsed["ai_usage"].(map[string]interface{}); ok {
+						if auData, err := json.Marshal(au); err == nil {
+							json.Unmarshal(auData, &finalResponse.AIUsage)
+						}
+					}
+
+					if cost, ok := parsed["cost"].(map[string]interface{}); ok {
+						if costData, err := json.Marshal(cost); err == nil {
+							json.Unmarshal(costData, &finalResponse.Cost)
+						}
+					}
+
+					if sr, ok := parsed["search_results"]; ok {
+						if srData, err := json.Marshal(sr); err == nil {
+							json.Unmarshal(srData, &finalResponse.SearchResults)
+						}
+					} else if len(searchResults) > 0 {
+						finalResponse.SearchResults = searchResults
+					}
+				} else {
+					finalResponse.Success = false
+					if errMsg, ok := parsed["error"].(string); ok {
+						finalResponse.Error = errMsg
+					}
+				}
+			}
+		}
+	} else {
+		// Fallback: try to parse the entire body as a single JSON object.
 		var parsed map[string]interface{}
-		if err := json.Unmarshal([]byte(dataStr), &parsed); err != nil {
-			continue
-		}
-
-		if results, ok := parsed["search_results"]; ok {
-			if _, hasSuccess := parsed["success"]; !hasSuccess {
+		if err := json.Unmarshal(bodyBytes, &parsed); err == nil {
+			if results, ok := parsed["search_results"]; ok {
 				if resultsData, err := json.Marshal(results); err == nil {
 					var sr []SearchResult
-					if json.Unmarshal(resultsData, &sr) == nil {
-						searchResults = append(searchResults, sr...)
-					}
+					json.Unmarshal(resultsData, &sr)
+					finalResponse.SearchResults = sr
 				}
 			}
-		}
 
-		if choices, ok := parsed["choices"].([]interface{}); ok && len(choices) > 0 {
-			if choice, ok := choices[0].(map[string]interface{}); ok {
-				if delta, ok := choice["delta"].(map[string]interface{}); ok {
-					if content, ok := delta["content"].(string); ok {
-						fullContent.WriteString(content)
-					}
+			if contents, ok := parsed["contents"]; ok {
+				finalResponse.Contents = contents
+			}
+
+			if txID, ok := parsed["tx_id"].(string); ok {
+				finalResponse.TxID = txID
+			}
+			if originalQuery, ok := parsed["original_query"].(string); ok {
+				finalResponse.OriginalQuery = originalQuery
+			}
+			if dataType, ok := parsed["data_type"].(string); ok {
+				finalResponse.DataType = dataType
+			}
+
+			if success, ok := parsed["success"]; ok {
+				if successBool, ok := success.(bool); ok {
+					finalResponse.Success = successBool
 				}
 			}
-		}
 
-		if success, ok := parsed["success"]; ok {
-			if successBool, ok := success.(bool); ok && successBool {
-				finalResponse.Success = true
-				if txID, ok := parsed["tx_id"].(string); ok {
-					finalResponse.TxID = txID
-				}
-				if originalQuery, ok := parsed["original_query"].(string); ok {
-					finalResponse.OriginalQuery = originalQuery
-				}
-				if dataType, ok := parsed["data_type"].(string); ok {
-					finalResponse.DataType = dataType
-				}
-				if contents, ok := parsed["contents"]; ok {
-					finalResponse.Contents = contents
-				}
-
-				if sm, ok := parsed["search_metadata"].(map[string]interface{}); ok {
-					if smData, err := json.Marshal(sm); err == nil {
-						json.Unmarshal(smData, &finalResponse.SearchMetadata)
-					}
-				}
-
-				if au, ok := parsed["ai_usage"].(map[string]interface{}); ok {
-					if auData, err := json.Marshal(au); err == nil {
-						json.Unmarshal(auData, &finalResponse.AIUsage)
-					}
-				}
-
-				if cost, ok := parsed["cost"].(map[string]interface{}); ok {
-					if costData, err := json.Marshal(cost); err == nil {
-						json.Unmarshal(costData, &finalResponse.Cost)
-					}
-				}
-
-				if sr, ok := parsed["search_results"]; ok {
-					if srData, err := json.Marshal(sr); err == nil {
-						json.Unmarshal(srData, &finalResponse.SearchResults)
-					}
-				} else if len(searchResults) > 0 {
-					finalResponse.SearchResults = searchResults
-				}
-			} else {
-				finalResponse.Success = false
-				if errMsg, ok := parsed["error"].(string); ok {
-					finalResponse.Error = errMsg
-				}
+			if errMsg, ok := parsed["error"].(string); ok {
+				finalResponse.Error = errMsg
 			}
 		}
 	}
