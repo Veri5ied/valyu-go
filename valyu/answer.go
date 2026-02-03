@@ -152,6 +152,17 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode >= 400 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &parsed); err == nil {
+			if errMsg, ok := parsed["error"].(string); ok && errMsg != "" {
+				return &AnswerResponse{Success: false, Error: errMsg}, nil
+			}
+		}
+		return &AnswerResponse{Success: false, Error: fmt.Sprintf("request failed with status %d", resp.StatusCode)}, nil
+	}
+
 	var fullContent strings.Builder
 	var searchResults []SearchResult
 	var finalResponse AnswerResponse
