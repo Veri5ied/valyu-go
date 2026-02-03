@@ -244,6 +244,15 @@ func (c *Client) Answer(ctx context.Context, query string, opts *AnswerOptions) 
 
 	if finalResponse.Contents == nil && fullContent.Len() > 0 {
 		finalResponse.Contents = fullContent.String()
+		finalResponse.Success = true
+	}
+
+	if len(searchResults) > 0 && len(finalResponse.SearchResults) == 0 {
+		finalResponse.SearchResults = searchResults
+	}
+
+	if finalResponse.Contents != nil || fullContent.Len() > 0 {
+		finalResponse.Success = true
 	}
 
 	if !finalResponse.Success && finalResponse.Error == "" {
