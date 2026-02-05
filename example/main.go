@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Veri5ied/valyu-go/valyu"
+	"github.com/Veri5ied/valyu-go/valyu/search"
 )
 
 func pretty(v interface{}) string {
@@ -25,7 +26,7 @@ func main() {
 		log.Fatal("set VALYU_API_KEY env var")
 	}
 
-	client, err := valyu.NewClient("")
+	client, err := valyu.New("")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func main() {
 
 	// Search
 	fmt.Println("=== Search ===")
-	sr, err := client.Search(ctx, "What is retrieval-augmented generation?", &valyu.SearchOptions{MaxNumResults: 3})
+	sr, err := client.Search.Search(ctx, "What is retrieval-augmented generation?", &search.Options{MaxNumResults: 3})
 	if err != nil {
 		fmt.Println("Search error:", err)
 	} else if !sr.Success {
@@ -48,7 +49,7 @@ func main() {
 
 	// Answer (non-stream)
 	fmt.Println("\n=== Answer ===")
-	ans, err := client.Answer(ctx, "Explain RAG in AI, briefly.", nil)
+	ans, err := client.Answer.Answer(ctx, "Explain RAG in AI, briefly.", nil)
 	if err != nil {
 		fmt.Println("Answer error:", err)
 	} else if !ans.Success {
@@ -59,15 +60,13 @@ func main() {
 	}
 
 	// AnswerStream (SSE)
-	fmt.Println("=== AnswerStream ===")
-	streamCh, err := client.AnswerStream(ctx, "What is RAG in AI?", &valyu.AnswerOptions{
-		SearchType: valyu.SearchTypeAll,
-	})
+	fmt.Println("\n=== AnswerStream ===")
+	streamCh, err := client.Answer.Stream(ctx, "Explain RAG in AI, briefly.", nil)
 	if err != nil {
 		fmt.Printf("AnswerStream error: %v\n", err)
 	} else {
 		var fullContent strings.Builder
-		var streamResults []valyu.SearchResult
+		var streamResults []search.Result
 
 		for chunk := range streamCh {
 			switch chunk.Type {
@@ -94,7 +93,7 @@ func main() {
 
 	// Datasources
 	fmt.Println("\n=== Datasources ===")
-	ds, err := client.Datasources.List(ctx, nil)
+	ds, err := client.Datasources.List(ctx)
 	if err != nil {
 		fmt.Println("Datasources error:", err)
 	} else if !ds.Success {

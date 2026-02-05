@@ -1,4 +1,4 @@
-package valyu
+package common
 
 type SearchType string
 
