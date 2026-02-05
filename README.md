@@ -34,17 +34,18 @@ import (
     "log"
 
     "github.com/Veri5ied/valyu-go/valyu"
+    "github.com/Veri5ied/valyu-go/valyu/search"
 )
 
 func main() {
-    client, err := valyu.NewClient("") // Uses VALYU_API_KEY env var
+    client, err := valyu.New("") // Uses VALYU_API_KEY env var
     if err != nil {
         log.Fatal(err)
     }
 
     ctx := context.Background()
 
-    resp, _ := client.Search(ctx, "machine learning transformers", nil)
+    resp, _ := client.Search.Search(ctx, "machine learning transformers", nil)
     for _, r := range resp.Results {
         fmt.Println(r.Title)
     }
@@ -60,7 +61,7 @@ export VALYU_API_KEY="your-api-key"
 Or pass directly:
 
 ```go
-client, err := valyu.NewClient("your-api-key")
+client, err := valyu.New("your-api-key")
 ```
 
 ## APIs
@@ -68,8 +69,11 @@ client, err := valyu.NewClient("your-api-key")
 ### Search
 
 ```go
-resp, _ := client.Search(ctx, "query", &valyu.SearchOptions{
-    SearchType:    valyu.SearchTypeProprietary,
+import "github.com/Veri5ied/valyu-go/valyu/search"
+import "github.com/Veri5ied/valyu-go/valyu/common"
+
+resp, _ := client.Search.Search(ctx, "query", &search.Options{
+    SearchType:    common.SearchTypeProprietary,
     MaxNumResults: 20,
     IncludedSources: []string{"valyu/valyu-arxiv"},
 })
@@ -78,17 +82,23 @@ resp, _ := client.Search(ctx, "query", &valyu.SearchOptions{
 ### Contents
 
 ```go
-resp, _ := client.Contents(ctx, []string{"https://example.com"}, &valyu.ContentsOptions{
+import "github.com/Veri5ied/valyu-go/valyu/contents"
+import "github.com/Veri5ied/valyu-go/valyu/common"
+
+resp, _ := client.Contents.Get(ctx, []string{"https://example.com"}, &contents.Options{
     Summary:        true,
-    ResponseLength: valyu.ResponseLengthMax,
+    ResponseLength: common.ResponseLengthMax,
 })
 ```
 
 ### Answer
 
 ```go
-resp, _ := client.Answer(ctx, "What are transformers?", &valyu.AnswerOptions{
-    SearchType: valyu.SearchTypeAll,
+import "github.com/Veri5ied/valyu-go/valyu/answer"
+import "github.com/Veri5ied/valyu-go/valyu/common"
+
+resp, _ := client.Answer.Answer(ctx, "What are transformers?", &answer.Options{
+    SearchType: common.SearchTypeAll,
     FastMode:   true,
 })
 ```
@@ -96,44 +106,41 @@ resp, _ := client.Answer(ctx, "What are transformers?", &valyu.AnswerOptions{
 ### DeepResearch
 
 ```go
-task, _ := client.DeepResearch.Create(ctx, &valyu.DeepResearchCreateOptions{
+import "github.com/Veri5ied/valyu-go/valyu/deepresearch"
+import "github.com/Veri5ied/valyu-go/valyu/common"
+
+task, _ := client.DeepResearch.Create(ctx, &deepresearch.CreateOptions{
     Query: "AI safety research summary",
-    Mode:  valyu.DeepResearchModeFast,
+    Mode:  common.DeepResearchModeFast,
 })
 
-result, _ := client.DeepResearch.Wait(ctx, task.DeepResearchID, nil)
-fmt.Println(result.Output)
+status, _ := client.DeepResearch.Get(ctx, task.DeepResearchID)
 ```
 
 ### Batch
 
 ```go
-batch, _ := client.Batch.Create(ctx, &valyu.CreateBatchOptions{
+import "github.com/Veri5ied/valyu-go/valyu/batch"
+import "github.com/Veri5ied/valyu-go/valyu/common"
+
+newBatch, _ := client.Batch.Create(ctx, &batch.CreateOptions{
     Name: "Research Batch",
-    Mode: valyu.DeepResearchModeStandard,
+    Mode: common.DeepResearchModeStandard,
 })
 
-client.Batch.AddTasks(ctx, batch.BatchID, &valyu.AddBatchTasksOptions{
-    Tasks: []valyu.BatchTaskInput{
-        {Query: "Topic 1"},
-        {Query: "Topic 2"},
-    },
-})
-
-result, _ := client.Batch.WaitForCompletion(ctx, batch.BatchID, nil)
+status, _ := client.Batch.Get(ctx, newBatch.BatchID)
 ```
 
 ### Datasources
 
 ```go
-sources, _ := client.Datasources.List(ctx, nil)
-categories, _ := client.Datasources.Categories(ctx)
+sources, _ := client.Datasources.List(ctx)
 ```
 
 ## Configuration
 
 ```go
-client, err := valyu.NewClient("api-key",
+client, err := valyu.New("api-key",
     valyu.WithBaseURL("https://custom.api.com"),
     valyu.WithTimeout(60 * time.Second),
     valyu.WithHTTPClient(customClient),
@@ -143,7 +150,7 @@ client, err := valyu.NewClient("api-key",
 ## Error Handling
 
 ```go
-resp, err := client.Search(ctx, "query", nil)
+resp, err := client.Search.Search(ctx, "query", nil)
 if err != nil {
     log.Fatal("Network error:", err)
 }
